@@ -1,6 +1,7 @@
 import 'package:expensify/models/expense.dart';
 import 'package:expensify/models/expense_enum.dart';
 import 'package:expensify/screens/addexpense.dart';
+import 'package:expensify/screens/summary_screen.dart';
 import 'package:expensify/widgets/common_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
@@ -22,7 +23,36 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _box = Hive.box<Expense>('expenses');
   }
-  List<Expense> get _expenses => _box.values.toList();
+  DateTime? _filterDate;
+  ExpenseCategory? _filterCategory;
+  double? _minAmount;
+  double? _maxAmount;
+  String _sortOrder = 'recent'; // 'recent', 'oldest'
+
+  List<Expense> get _expenses {
+    var list = _box.values.toList();
+    
+    if (_filterCategory != null) {
+      list = list.where((e) => e.category == _filterCategory).toList();
+    }
+    if (_filterDate != null) {
+      list = list.where((e) => e.date.year == _filterDate!.year && e.date.month == _filterDate!.month && e.date.day == _filterDate!.day).toList();
+    }
+    if (_minAmount != null) {
+      list = list.where((e) => e.amount >= _minAmount!).toList();
+    }
+    if (_maxAmount != null) {
+      list = list.where((e) => e.amount <= _maxAmount!).toList();
+    }
+
+    if (_sortOrder == 'recent') {
+      list.sort((a, b) => b.date.compareTo(a.date));
+    } else {
+      list.sort((a, b) => a.date.compareTo(b.date));
+    }
+
+    return list;
+  }
   double get _total => _expenses.fold(0, (sum, e) => sum + e.amount);
 
   // replace _deleteExpense
@@ -133,84 +163,221 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _showSummary() {
-    if (_expenses.isEmpty) return;
 
-    final totals = <ExpenseCategory, double>{};
-    for (final e in _expenses) {
-      totals[e.category] = (totals[e.category] ?? 0) + e.amount;
-    }
-    final sorted = totals.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+
+  void _showFilterSheet() {
+    DateTime? tempDate = _filterDate;
+    ExpenseCategory? tempCat = _filterCategory;
+    TextEditingController minCtrl = TextEditingController(text: _minAmount?.toString() ?? '');
+    TextEditingController maxCtrl = TextEditingController(text: _maxAmount?.toString() ?? '');
+    String tempSort = _sortOrder;
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: const Color(0xFF151A28),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'SUMMARY',
-              style: TextStyle(
-                color: Colors.cyanAccent,
-                fontSize: 16,
-                letterSpacing: 3,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              left: 24,
+              right: 24,
+              top: 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'FILTER EXPENSES',
+                    style: TextStyle(
+                      color: Colors.cyanAccent,
+                      fontSize: 16,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // Date Picker
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today, color: Colors.white70, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          tempDate == null 
+                            ? 'Select Date' 
+                            : '${tempDate!.day}/${tempDate!.month}/${tempDate!.year}',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          final date = await showDatePicker(
+                            context: context,
+                            initialDate: tempDate ?? DateTime.now(),
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime.now(),
+                          );
+                          if (date != null) {
+                            setSheetState(() => tempDate = date);
+                          }
+                        },
+                        child: const Text('Choose'),
+                      ),
+                      if (tempDate != null)
+                        IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.redAccent, size: 20),
+                          onPressed: () => setSheetState(() => tempDate = null),
+                        )
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Category Dropdown
+                  DropdownButtonFormField<ExpenseCategory?>(
+                    value: tempCat,
+                    dropdownColor: const Color(0xFF151A28),
+                    decoration: InputDecoration(
+                      labelText: 'Category',
+                      labelStyle: const TextStyle(color: Colors.grey),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey.withOpacity(0.3))),
+                      focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+                    ),
+                    items: [
+                      const DropdownMenuItem<ExpenseCategory?>(
+                        value: null,
+                        child: Text('All Categories', style: TextStyle(color: Colors.white)),
+                      ),
+                      ...ExpenseCategory.values.map((cat) {
+                        return DropdownMenuItem<ExpenseCategory?>(
+                          value: cat,
+                          child: Row(
+                            children: [
+                              Text(cat.emoji),
+                              const SizedBox(width: 8),
+                              Text(cat.label, style: const TextStyle(color: Colors.white)),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (val) => setSheetState(() => tempCat = val),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Amount Range
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: minCtrl,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            labelText: 'Min Amount',
+                            labelStyle: const TextStyle(color: Colors.grey),
+                            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey.withOpacity(0.3))),
+                            focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          controller: maxCtrl,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: InputDecoration(
+                            labelText: 'Max Amount',
+                            labelStyle: const TextStyle(color: Colors.grey),
+                            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.grey.withOpacity(0.3))),
+                            focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Sort Order
+                  const Text('Sort By', style: TextStyle(color: Colors.grey)),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: RadioListTile<String>(
+                          title: const Text('Recent', style: TextStyle(color: Colors.white, fontSize: 14)),
+                          value: 'recent',
+                          groupValue: tempSort,
+                          activeColor: Colors.cyanAccent,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setSheetState(() => tempSort = val!),
+                        ),
+                      ),
+                      Expanded(
+                        child: RadioListTile<String>(
+                          title: const Text('Oldest', style: TextStyle(color: Colors.white, fontSize: 14)),
+                          value: 'oldest',
+                          groupValue: tempSort,
+                          activeColor: Colors.cyanAccent,
+                          contentPadding: EdgeInsets.zero,
+                          onChanged: (val) => setSheetState(() => tempSort = val!),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _filterDate = null;
+                              _filterCategory = null;
+                              _minAmount = null;
+                              _maxAmount = null;
+                              _sortOrder = 'recent';
+                            });
+                            Navigator.pop(context);
+                          },
+                          child: const Text('Clear All', style: TextStyle(color: Colors.redAccent)),
+                        ),
+                      ),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.cyanAccent.withOpacity(0.1),
+                            foregroundColor: Colors.cyanAccent,
+                            side: const BorderSide(color: Colors.cyanAccent),
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _filterDate = tempDate;
+                              _filterCategory = tempCat;
+                              _minAmount = double.tryParse(minCtrl.text);
+                              _maxAmount = double.tryParse(maxCtrl.text);
+                              _sortOrder = tempSort;
+                            });
+                            Navigator.pop(context);
+                          },
+                          child: const Text('Apply'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
-            Text(
-              'Total: ₹${_total.toStringAsFixed(2)}',
-              style: const TextStyle(color: Colors.white70, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            ...sorted.map((entry) {
-              final pct = (_total > 0) ? (entry.value / _total * 100) : 0.0;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  children: [
-                    Text(entry.key.emoji, style: const TextStyle(fontSize: 18)),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            entry.key.label,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          LinearProgressIndicator(
-                            value: pct / 100,
-                            backgroundColor: Colors.white10,
-                            color: entry.key.color,
-                            minHeight: 4,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      '₹${entry.value.toStringAsFixed(0)}  (${pct.toStringAsFixed(0)}%)',
-                      style: TextStyle(color: entry.key.color, fontSize: 12),
-                    ),
-                  ],
-                ),
-              );
-            }),
-            const SizedBox(height: 12),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -218,7 +385,15 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('EXPENSIFY')),
+      appBar: AppBar(
+        title: const Text('EXPENSIFY'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.filter_list, color: Colors.cyanAccent),
+            onPressed: _showFilterSheet,
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -268,7 +443,7 @@ class _HomePageState extends State<HomePage> {
                     : ListView.builder(
                         itemCount: _expenses.length,
                         itemBuilder: (_, i) {
-                          final exp = _expenses[_expenses.length - 1 - i];
+                          final exp = _expenses[i];
                           return ExpenseCard(
                             expense: exp,
                             onEdit: () => _openExpenseSheet(existing: exp),
@@ -297,7 +472,14 @@ class _HomePageState extends State<HomePage> {
                       label: 'SUMMARY',
                       icon: Icons.bar_chart,
                       color: Colors.purpleAccent,
-                      onPressed: _showSummary,
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SummaryScreen(),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
